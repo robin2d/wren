@@ -263,8 +263,11 @@ typedef enum
   WREN_TYPE_NUM,
   WREN_TYPE_FOREIGN,
   WREN_TYPE_LIST,
+  WREN_TYPE_MAP,
   WREN_TYPE_NULL,
   WREN_TYPE_STRING,
+  WREN_TYPE_CLASS,
+  WREN_TYPE_INSTANCE,
 
   // The object is of a type that isn't accessible by the C API.
   WREN_TYPE_UNKNOWN
@@ -284,6 +287,24 @@ WrenVM* wrenNewVM(WrenConfiguration* configuration);
 // Disposes of all resources is use by [vm], which was previously created by a
 // call to [wrenNewVM].
 void wrenFreeVM(WrenVM* vm);
+
+// A generic allocation function that handles all explicit memory management.
+// It's used like so:
+//
+// - To allocate new memory, [memory] is NULL and [oldSize] is zero. It should
+//   return the allocated memory or NULL on failure.
+//
+// - To attempt to grow an existing allocation, [memory] is the memory,
+//   [oldSize] is its previous size, and [newSize] is the desired size.
+//   It should return [memory] if it was able to grow it in place, or a new
+//   pointer if it had to move it.
+//
+// - To shrink memory, [memory], [oldSize], and [newSize] are the same as above
+//   but it will always return [memory].
+//
+// - To free memory, [memory] will be the memory to free and [newSize] and
+//   [oldSize] will be zero. It should return NULL.
+void* wrenReallocate(WrenVM* vm, void* memory, size_t oldSize, size_t newSize);
 
 // Immediately run the garbage collector to free unused memory.
 void wrenCollectGarbage(WrenVM* vm);
@@ -318,6 +339,9 @@ WrenInterpretResult wrenCall(WrenVM* vm, WrenHandle* method);
 // Releases the reference stored in [handle]. After calling this, [handle] can
 // no longer be used.
 void wrenReleaseHandle(WrenVM* vm, WrenHandle* handle);
+
+// Release all handles stored in the vm
+void wrenReleaseAllHandles(WrenVM* vm);
 
 // The following functions are intended to be called from foreign methods or
 // finalizers. The interface Wren provides to a foreign method is like a
@@ -367,8 +391,14 @@ int wrenGetSlotCount(WrenVM* vm);
 // It is an error to call this from a finalizer.
 void wrenEnsureSlots(WrenVM* vm, int numSlots);
 
+// Gets the name of the [type] as a string
+const char* wrenGetTypeName(WrenType type);
+
 // Gets the type of the object in [slot].
 WrenType wrenGetSlotType(WrenVM* vm, int slot);
+
+// Gets the type of the object stored by [handle]
+WrenType wrenGetHandleType(WrenHandle* handle);
 
 // Reads a boolean value from [slot].
 //
@@ -440,6 +470,9 @@ void* wrenSetSlotNewForeign(WrenVM* vm, int slot, int classSlot, size_t size);
 // Stores a new empty list in [slot].
 void wrenSetSlotNewList(WrenVM* vm, int slot);
 
+// Stores a new empty map in [slot]
+void wrenSetSlotNewMap(WrenVM* vm, int slot);
+
 // Stores null in [slot].
 void wrenSetSlotNull(WrenVM* vm, int slot);
 
@@ -470,6 +503,36 @@ void wrenGetListElement(WrenVM* vm, int listSlot, int index, int elementSlot);
 // an element, use `-1` for the index.
 void wrenInsertInList(WrenVM* vm, int listSlot, int index, int elementSlot);
 
+// Clears the list stored at [listSlot]
+void wrenClearList(WrenVM* vm, int listSlot);
+
+// Takes the value stored at [valueSlot] and inserts it into the map stored
+// at [mapSlot] associated with the key at [keySlot].
+void wrenInsertInMap(WrenVM* vm, int mapSlot, int keySlot, int valueSlot);
+
+// Clears the map stored at [mapSlot]
+void wrenClearMap(WrenVM* vm, int mapSlot);
+
+// Deletes the value associated with key at [keySlot] from map stored at
+// [mapSlot]
+bool wrenRemoveFromMap(WrenVM* vm, int mapSlot, int keySlot, int removedSlot);
+
+// Return true if the map at [mapSlot] has a key equal to the one stored
+// at [keySlot]
+bool wrenExistsInMap(WrenVM* vm, int mapSlot, int keySlot);
+
+// Read element associated with key stored at [keySlot] from map stored at
+// [mapSlot] and place it in slot [elementSlot]
+bool wrenGetMapElement(WrenVM* vm, int mapSlot, int keySlot, int elementSlot);
+
+// Count the number of elements in the map stored at [slot]
+int wrenGetMapCount(WrenVM* vm, int slot);
+
+// Build a list of keys that exist in the map stored at [mapSlot],
+// and stores this list in [listSlot]. If there is no list in [listSlot],
+// then a new list is created.
+void wrenGetMapKeys(WrenVM* vm, int mapSlot, int listSlot);
+
 // Looks up the top level variable with [name] in resolved [module] and stores
 // it in [slot].
 void wrenGetVariable(WrenVM* vm, const char* module, const char* name,
@@ -484,5 +547,56 @@ void* wrenGetUserData(WrenVM* vm);
 
 // Sets user data associated with the WrenVM.
 void wrenSetUserData(WrenVM* vm, void* userData);
+
+// Checks if the values in the two slots are equal
+bool wrenGetSlotsEqual(WrenVM* vm, int slot1, int slot2);
+
+// Checks if the handle is a class.
+bool wrenHandleIsClass(WrenVM* vm, WrenHandle* handle);
+
+// Check if the handle is an instance.
+bool wrenHandleIsInstance(WrenVM* vm, WrenHandle* handle);
+
+// Copies the value stored in [fromSlot] into [toSlot]
+void wrenSlotCopy(WrenVM* vm, int fromSlot, int toSlot);
+
+// Clones the value stored in [fromSlot] into [toSlot]
+void wrenSlotClone(WrenVM* vm, int fromSlot, int toSlot);
+
+// Does a deep clone of the value stored in [fromSlot] into [toSlot]
+void wrenSlotCloneDeep(WrenVM* vm, int fromSlot, int toSlot);
+
+// Checks if [handle] is a foreign object.
+bool wrenIsHandleForeign(WrenHandle* handle);
+
+// Gets a pointer to the foreign object referenced by [handle].
+void* wrenGetHandleForeign(WrenHandle* handle);
+
+// Creates a new handle which is a copy of [handle].
+WrenHandle* wrenCopyHandle(WrenVM* vm, WrenHandle* handle);
+
+// Get the class of the value stored in [slot] and store it in [classSlot].
+void wrenGetClassOfSlotValue(WrenVM* vm, int slot, int classSlot);
+
+// Get the name of the class stored in [slot].
+const char* wrenGetClassName(WrenVM* vm, int slot);
+
+// Get the amount of fields of the value stored in [slot].
+int wrenGetFieldCount(WrenVM* vm, int slot);
+
+// Get field [index] of the instance in [objSlot] and store it in [fieldSlot].
+void wrenGetField(WrenVM* vm, int objSlot, int index, int fieldSlot);
+
+// Set field [index] of the instance in [objSlot] to the value of [fieldSlot].
+void wrenSetField(WrenVM* vm, int objSlot, int index, int fieldSlot);
+
+// Get the superclass of [classSlot] and store it in [superClassSlot].
+void wrenGetSuperClass(WrenVM* vm, int classSlot, int superClassSlot);
+
+// Find all method signatures of the class in [classSlot] and populate the list in [listSlot].
+void wrenGetMethodSignatures(WrenVM* vm, int classSlot, int listSlot);
+
+// Returns true if the class in [classSlot] has a method matching [signature].
+bool wrenHasMethod(WrenVM* vm, int classSlot, const char* signature);
 
 #endif
